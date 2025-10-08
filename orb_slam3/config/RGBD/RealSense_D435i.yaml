@@ -1,0 +1,83 @@
+%YAML:1.0
+
+#--------------------------------------------------------------------------------------------
+# RealSense D435i RGB-D Camera Parameters
+#--------------------------------------------------------------------------------------------
+File.version: "1.0"
+
+Camera.type: "PinHole"
+
+# D435i RGB Camera calibration and distortion parameters (OpenCV)
+# These are typical values for D435i, but should be calibrated for your specific camera
+Camera1.fx: 382.613
+Camera1.fy: 382.613
+Camera1.cx: 320.183
+Camera1.cy: 236.455
+
+# Distortion parameters (D435i typically has minimal distortion)
+Camera1.k1: 0.0
+Camera1.k2: 0.0
+Camera1.p1: 0.0
+Camera1.p2: 0.0
+Camera1.k3: 0.0
+
+# Camera resolution (D435i default)
+Camera.width: 640
+Camera.height: 480
+
+# Camera frames per second (D435i supports 30fps)
+Camera.fps: 30
+
+# Color order of the images (0: BGR, 1: RGB). Driver publishes bgr8, so set 0
+Camera.RGB: 0
+
+#--------------------------------------------------------------------------------------------
+# RGB-D specific parameters for D435i
+#--------------------------------------------------------------------------------------------
+
+# Depth scaling factor
+# Driver publishes depth as 32FC1 in meters -> set factor to 1.0
+RGBD.DepthMapFactor: 1.0
+
+# Depth threshold key used by some builds
+ThDepth: 40.0
+# Also provide Stereo-prefixed keys for compatibility
+Stereo.ThDepth: 40.0
+
+# Baseline
+Camera.bf: 19.13
+# Also provide Stereo.b for compatibility (baseline in meters)
+Stereo.b: 0.05
+
+#--------------------------------------------------------------------------------------------
+# ORB Parameters (optimized for D435i)
+#--------------------------------------------------------------------------------------------
+
+# ORB Extractor: Number of features per image
+# D435i has good image quality, so we can extract more features
+ORBextractor.nFeatures: 1250
+
+# ORB Extractor: Scale factor between levels in the scale pyramid 	
+ORBextractor.scaleFactor: 1.2
+
+# ORB Extractor: Number of levels in the scale pyramid	
+ORBextractor.nLevels: 8
+
+# ORB Extractor: Fast threshold
+# D435i has good contrast, so we can use standard thresholds
+ORBextractor.iniThFAST: 20
+ORBextractor.minThFAST: 7
+
+#--------------------------------------------------------------------------------------------
+# Viewer Parameters
+#--------------------------------------------------------------------------------------------
+Viewer.KeyFrameSize: 0.05
+Viewer.KeyFrameLineWidth: 1.0
+Viewer.GraphLineWidth: 0.9
+Viewer.PointSize: 2.0
+Viewer.CameraSize: 0.08
+Viewer.CameraLineWidth: 3.0
+Viewer.ViewpointX: 0.0
+Viewer.ViewpointY: -0.7
+Viewer.ViewpointZ: -1.8
+Viewer.ViewpointF: 500.0 
