@@ -113,9 +113,9 @@ int main(int argc, char** argv) {
 
   // ZMQ context and sockets
   zmq::context_t ctx(1);
-  // SUB always connects per spec
+  // SUB binds per project spec; publishers connect to this endpoint
   zmq::socket_t sub(ctx, zmq::socket_type::sub);
-  sub.connect(cfg.subEndpoint);
+  orbslam3_rgbd_zmq_bridge::bindOrConnect(sub, cfg.subEndpoint, /*bindMode=*/true);
   sub.set(zmq::sockopt::subscribe, std::string("rgbd/input"));
 
   PublisherEndpoints eps;

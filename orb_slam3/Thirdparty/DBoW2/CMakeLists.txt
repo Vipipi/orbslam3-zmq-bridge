@@ -1,4 +1,4 @@
-set (dbow2_ROOR_DIR "${PROJECT_SOURCE_DIR}/orb_slam3/Thirdparty/DBoW2")
+set (dbow2_ROOR_DIR "${CMAKE_CURRENT_SOURCE_DIR}")
 
 set(HDRS_DBOW2
   ${dbow2_ROOR_DIR}/DBoW2/BowVector.h
@@ -20,7 +20,7 @@ set(SRCS_DUTILS
   ${dbow2_ROOR_DIR}/DUtils/Random.cpp
   ${dbow2_ROOR_DIR}/DUtils/Timestamp.cpp)
 
-# set(LIBRARY_OUTPUT_PATH ${dbow2_ROOR_DIR}/lib)
+# Output DBoW2 to local lib directory
 set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${dbow2_ROOR_DIR}/lib)
 
 include_directories(${OpenCV_INCLUDE_DIRS})

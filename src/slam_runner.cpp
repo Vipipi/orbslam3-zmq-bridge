@@ -52,19 +52,19 @@ class SlamRunner::Impl {
       KeyframePose kf{};
       kf.id = static_cast<std::uint64_t>(i);
       kf.tNs = 0;
-      const Eigen::Matrix4f& T = poses[i];
+      const Eigen::Matrix4f T = poses[i].matrix();
       for (int r = 0; r < 4; ++r) {
         for (int c = 0; c < 4; ++c) kf.TwcRowMajor[r * 4 + c] = T(r, c);
       }
       out.emplace_back(kf);
     }
+#endif
     return out;
   }
 
  private:
   ORB_SLAM3::System* system_ = nullptr;
 };
-#endif
 
 SlamRunner::SlamRunner(const SlamInitParams& params) {
   impl_ = new Impl(params);

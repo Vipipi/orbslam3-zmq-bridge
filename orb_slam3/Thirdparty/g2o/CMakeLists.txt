@@ -1,4 +1,4 @@
-set(g2o_SOURCE_DIR "${PROJECT_SOURCE_DIR}/orb_slam3/Thirdparty/g2o")
+set(g2o_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}")
 
 SET(g2o_C_FLAGS)
 SET(g2o_CXX_FLAGS)
@@ -50,6 +50,10 @@ SET(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} ${g2o_C_FLAGS}")
 # Generate config.h
 SET(G2O_CXX_COMPILER "${CMAKE_CXX_COMPILER_ID} ${CMAKE_CXX_COMPILER}")
 configure_file(${g2o_SOURCE_DIR}/config.h.in ${g2o_SOURCE_DIR}/config.h)
+
+# Eigen3 include path
+find_package(Eigen3 REQUIRED)
+set(G2O_EIGEN3_INCLUDE ${EIGEN3_INCLUDE_DIRS})
 
 # Set up the top-level include directories
 INCLUDE_DIRECTORIES(

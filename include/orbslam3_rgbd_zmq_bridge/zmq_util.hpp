@@ -5,6 +5,7 @@
 #include <array>
 #include <cstdint>
 #include <optional>
+#include <memory>
 #include <zmq.hpp>
 
 namespace orbslam3_rgbd_zmq_bridge {

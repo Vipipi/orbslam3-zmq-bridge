@@ -8,6 +8,16 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
+# Ensure runtime can find in-tree ORB-SLAM3 and its Thirdparty libs
+set(CMAKE_BUILD_RPATH_USE_ORIGIN ON)
+list(APPEND CMAKE_BUILD_RPATH
+  "$ORIGIN"
+  "$ORIGIN/orb_slam3"
+  "$ORIGIN/orb_slam3/Thirdparty/DBoW2/lib"
+  "$ORIGIN/orb_slam3/Thirdparty/g2o/lib"
+  "/usr/local/lib"
+)
+
 # Dependencies
 find_package(OpenCV REQUIRED COMPONENTS core imgcodecs imgproc)
 find_package(Eigen3 REQUIRED)
