@@ -9,10 +9,10 @@ Camera.type: "PinHole"
 
 # D435i RGB Camera calibration and distortion parameters (OpenCV)
 # These are typical values for D435i, but should be calibrated for your specific camera
-Camera1.fx: 382.613
-Camera1.fy: 382.613
-Camera1.cx: 320.183
-Camera1.cy: 236.455
+Camera1.fx: 604.634705
+Camera1.fy: 604.906738
+Camera1.cx: 318.806030
+Camera1.cy: 259.239777
 
 # Distortion parameters (D435i typically has minimal distortion)
 Camera1.k1: 0.0
