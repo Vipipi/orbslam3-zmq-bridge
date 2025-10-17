@@ -110,7 +110,7 @@ RUN cmake -B build -S . -DCMAKE_BUILD_TYPE=Release \
  && cmake --build build -j
 ```
 
-## 7) ZMQ Message Model (MVP)
+## 7) ZMQ Message Model
 Input (publisher → bridge)
 - Topic: `rgbd/input`
 - Frames:
@@ -121,6 +121,23 @@ Input (publisher → bridge)
 Output (bridge → subscribers)
 - `slam/tracking_pose`: `[ uint64 t_ns, float32[16] Twc_row_major ]`
 - `slam/kf_pose`: `[ uint64 kf_id, uint64 t_ns, float32[16] Twc_row_major ]`
+
+Standardized topics (leading slash) added for map lifecycle and KF updates:
+- `/slam/kf_pose_update` (burst after optimizations):
+  - Frames: `[ uint64 map_id, uint64 kf_id, float32[16] T_wc_map_new ]`
+  - For single-map backend, `map_id = 0`.
+- `/slam/map_new`:
+  - Frames: `[ uint64 map_id, uint64 created_at_ns ]`
+  - For single-map backend, emitted once at startup with `map_id = 0`.
+- `/slam/map_switch`:
+  - Frames: `[ uint64 from_map_id, uint64 to_map_id, bytes reason_ascii ]`
+  - Emits `reason = "relocalized"` when tracking recovers (single-map: `0 -> 0`).
+- `/slam/map_merge`:
+  - Frames: `[ uint64 kept_map_id, uint64 merged_map_id, float32[7] S_kept_merged_sim3 ]`
+  - Not emitted by this backend (no map merges currently).
+- `/slam/map_correction`:
+  - Frames: `[ uint64 map_id, float32[16] T_global_map_new_SE3 ]`
+  - Not emitted by this backend (no global frame maintenance currently).
 
 Depth is converted to meters using `DepthMapFactor` from your RGB-D YAML (typ. 1000.0).
 

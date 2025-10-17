@@ -3372,8 +3372,8 @@ void Tracking::CreateNewKeyFrame()
     }
     // --- INSERT: log seq ID and ros time for your RTSM lookup ---
     std::cout << "[ORB_SLAM3] KeyFrame created:"
-              << " seq_id="   << pKF->mnFrameId
-              << " ros_time=" << std::fixed << pKF->mTimeStamp
+                  << " seq_id="     << pKF->mnFrameId
+              << " timestamp_s=" << std::fixed << pKF->mTimeStamp
               << std::endl;
 
     mpLocalMapper->InsertKeyFrame(pKF);

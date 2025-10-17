@@ -6,6 +6,9 @@
 #include <chrono>
 #include <unordered_map>
 #include <cstring>
+#include <deque>
+#include <mutex>
+#include <cmath>
 
 #include <opencv2/opencv.hpp>
 #include <zmq.hpp>
@@ -92,6 +95,41 @@ float readDepthMapFactor(const std::string& settingsPath) {
   return static_cast<float>(v);
 }
 
+struct CameraK {
+  float data[9] = {0};
+  bool valid = false;
+};
+
+CameraK readCameraK(const std::string& settingsPath) {
+  CameraK K;
+  cv::FileStorage fs(settingsPath, cv::FileStorage::READ);
+  if (!fs.isOpened()) return K;
+  auto getf = [&](const char* key, double defv) -> float {
+    cv::FileNode n = fs[key];
+    double v = defv;
+    if (!n.empty()) v = static_cast<double>(n);
+    return static_cast<float>(v);
+  };
+  float fx = getf("Camera.fx", 0.0);
+  float fy = getf("Camera.fy", 0.0);
+  float cx = getf("Camera.cx", 0.0);
+  float cy = getf("Camera.cy", 0.0);
+  if (fx <= 0.0f || fy <= 0.0f) {
+    fx = getf("Camera1.fx", fx);
+    fy = getf("Camera1.fy", fy);
+    cx = getf("Camera1.cx", cx);
+    cy = getf("Camera1.cy", cy);
+  }
+  fs.release();
+  if (fx > 0.0f && fy > 0.0f) {
+    K.data[0] = fx; K.data[1] = 0.0f; K.data[2] = cx;
+    K.data[3] = 0.0f; K.data[4] = fy; K.data[5] = cy;
+    K.data[6] = 0.0f; K.data[7] = 0.0f; K.data[8] = 1.0f;
+    K.valid = true;
+  }
+  return K;
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -110,6 +148,7 @@ int main(int argc, char** argv) {
 
   const float depthMapFactor = readDepthMapFactor(cfg.settings);
   const double invDepthFactor = 1.0 / static_cast<double>(depthMapFactor);
+  const CameraK cameraK = readCameraK(cfg.settings);
 
   // ZMQ context and sockets
   zmq::context_t ctx(1);
@@ -124,8 +163,52 @@ int main(int argc, char** argv) {
   if (!cfg.pubKfPose.empty()) eps.kfPoseEndpoint = cfg.pubKfPose;
   PubSockets pubs = orbslam3_rgbd_zmq_bridge::makePubs(ctx, eps, cfg.bindPub);
 
+  // Emit single-map creation event for single-map backend (map_id = 0)
+  {
+    std::uint64_t mapId = 0;
+    auto now = std::chrono::system_clock::now().time_since_epoch();
+    std::uint64_t createdNs = static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(now).count());
+    auto mapIdBytes = orbslam3_rgbd_zmq_bridge::packUint64LE(mapId);
+    auto createdBytes = orbslam3_rgbd_zmq_bridge::packUint64LE(createdNs);
+    std::vector<zmq::const_buffer> frames{
+      zmq::buffer(mapIdBytes.data(), mapIdBytes.size()),
+      zmq::buffer(createdBytes.data(), createdBytes.size())
+    };
+    if (pubs.singlePub) {
+      orbslam3_rgbd_zmq_bridge::sendMultipart(*pubs.singlePub, "/slam/map_new", frames);
+    } else if (pubs.trackingPub) {
+      orbslam3_rgbd_zmq_bridge::sendMultipart(*pubs.trackingPub, "/slam/map_new", frames);
+    } else if (pubs.kfPosePub) {
+      orbslam3_rgbd_zmq_bridge::sendMultipart(*pubs.kfPosePub, "/slam/map_new", frames);
+    }
+  }
+
   std::atomic<bool> running{true};
   std::unordered_map<std::uint64_t, std::array<float, 16>> kfCache;
+
+  struct FrameCacheEntry {
+    std::uint64_t tNs;
+    std::array<float, 16> Twc;
+    std::vector<std::uint8_t> rgbJpeg;
+    std::vector<std::uint8_t> depthRaw;
+  };
+  std::deque<FrameCacheEntry> frameCache;
+  std::mutex frameCacheMutex;
+  constexpr std::size_t kFrameCacheMax = 128;
+
+  auto poseError = [](const std::array<float, 16>& A, const std::array<float, 16>& B) -> double {
+    double dx = static_cast<double>(A[12]) - static_cast<double>(B[12]);
+    double dy = static_cast<double>(A[13]) - static_cast<double>(B[13]);
+    double dz = static_cast<double>(A[14]) - static_cast<double>(B[14]);
+    double tErr = dx*dx + dy*dy + dz*dz;
+    double tr = 0.0;
+    for (int r = 0; r < 3; ++r) {
+      for (int c = 0; c < 3; ++c) tr += static_cast<double>(A[r*4 + c]) * static_cast<double>(B[r*4 + c]);
+    }
+    double rErr = (3.0 - tr);
+    if (rErr < 0.0) rErr = 0.0;
+    return tErr + 0.01 * rErr;
+  };
 
   std::thread kfThread([&]() {
     while (running.load()) {
@@ -152,6 +235,45 @@ int main(int argc, char** argv) {
                 zmq::buffer(poseBytes.data(), poseBytes.size())
               };
               orbslam3_rgbd_zmq_bridge::sendMultipart(*pubs.kfPosePub, "slam/kf_pose", frames);
+              // Also emit standardized kf pose update with map_id
+              {
+                std::uint64_t mapId = 0;
+                auto mapIdBytes = orbslam3_rgbd_zmq_bridge::packUint64LE(mapId);
+                std::vector<zmq::const_buffer> framesUpd{
+                  zmq::buffer(mapIdBytes.data(), mapIdBytes.size()),
+                  zmq::buffer(idBytes.data(), idBytes.size()),
+                  zmq::buffer(poseBytes.data(), poseBytes.size())
+                };
+              orbslam3_rgbd_zmq_bridge::sendMultipart(*pubs.kfPosePub, "/slam/kf_pose_update", framesUpd);
+              if (cameraK.valid) {
+                FrameCacheEntry best{};
+                bool found = false;
+                double bestErr = 0.0;
+                {
+                  std::lock_guard<std::mutex> lg(frameCacheMutex);
+                  for (const auto& e : frameCache) {
+                    double err = poseError(kf.TwcRowMajor, e.Twc);
+                    if (!found || err < bestErr) { best = e; bestErr = err; found = true; }
+                  }
+                }
+                if (found) {
+                  std::uint64_t mapId = 0;
+                  auto mapIdBytes = orbslam3_rgbd_zmq_bridge::packUint64LE(mapId);
+                  auto kfIdBytes = orbslam3_rgbd_zmq_bridge::packUint64LE(kf.id);
+                  auto tnsBytes = orbslam3_rgbd_zmq_bridge::packUint64LE(best.tNs);
+                  std::vector<std::uint8_t> kBytes = orbslam3_rgbd_zmq_bridge::packFloat32ArrayLE(cameraK.data, 9);
+                  std::vector<zmq::const_buffer> packetFrames{
+                    zmq::buffer(mapIdBytes.data(), mapIdBytes.size()),
+                    zmq::buffer(kfIdBytes.data(), kfIdBytes.size()),
+                    zmq::buffer(tnsBytes.data(), tnsBytes.size()),
+                    zmq::buffer(kBytes.data(), kBytes.size()),
+                    zmq::buffer(best.rgbJpeg.data(), best.rgbJpeg.size()),
+                    zmq::buffer(best.depthRaw.data(), best.depthRaw.size())
+                  };
+                  orbslam3_rgbd_zmq_bridge::sendMultipart(*pubs.kfPosePub, "/slam/kf_packet", packetFrames);
+                }
+              }
+              }
             } else if (pubs.singlePub) {
               auto tnsBytes = orbslam3_rgbd_zmq_bridge::packUint64LE(kf.tNs);
               std::vector<std::uint8_t> poseBytes = orbslam3_rgbd_zmq_bridge::packFloat32ArrayLE(kf.TwcRowMajor.data(), 16);
@@ -162,6 +284,45 @@ int main(int argc, char** argv) {
                 zmq::buffer(poseBytes.data(), poseBytes.size())
               };
               orbslam3_rgbd_zmq_bridge::sendMultipart(*pubs.singlePub, "slam/kf_pose", frames);
+              // Also emit standardized kf pose update with map_id
+              {
+                std::uint64_t mapId = 0;
+                auto mapIdBytes = orbslam3_rgbd_zmq_bridge::packUint64LE(mapId);
+                std::vector<zmq::const_buffer> framesUpd{
+                  zmq::buffer(mapIdBytes.data(), mapIdBytes.size()),
+                  zmq::buffer(idBytes.data(), idBytes.size()),
+                  zmq::buffer(poseBytes.data(), poseBytes.size())
+                };
+              orbslam3_rgbd_zmq_bridge::sendMultipart(*pubs.singlePub, "/slam/kf_pose_update", framesUpd);
+              if (cameraK.valid) {
+                FrameCacheEntry best{};
+                bool found = false;
+                double bestErr = 0.0;
+                {
+                  std::lock_guard<std::mutex> lg(frameCacheMutex);
+                  for (const auto& e : frameCache) {
+                    double err = poseError(kf.TwcRowMajor, e.Twc);
+                    if (!found || err < bestErr) { best = e; bestErr = err; found = true; }
+                  }
+                }
+                if (found) {
+                  std::uint64_t mapId = 0;
+                  auto mapIdBytes = orbslam3_rgbd_zmq_bridge::packUint64LE(mapId);
+                  auto kfIdBytes = orbslam3_rgbd_zmq_bridge::packUint64LE(kf.id);
+                  auto tnsBytes = orbslam3_rgbd_zmq_bridge::packUint64LE(best.tNs);
+                  std::vector<std::uint8_t> kBytes = orbslam3_rgbd_zmq_bridge::packFloat32ArrayLE(cameraK.data, 9);
+                  std::vector<zmq::const_buffer> packetFrames{
+                    zmq::buffer(mapIdBytes.data(), mapIdBytes.size()),
+                    zmq::buffer(kfIdBytes.data(), kfIdBytes.size()),
+                    zmq::buffer(tnsBytes.data(), tnsBytes.size()),
+                    zmq::buffer(kBytes.data(), kBytes.size()),
+                    zmq::buffer(best.rgbJpeg.data(), best.rgbJpeg.size()),
+                    zmq::buffer(best.depthRaw.data(), best.depthRaw.size())
+                  };
+                  orbslam3_rgbd_zmq_bridge::sendMultipart(*pubs.singlePub, "/slam/kf_packet", packetFrames);
+                }
+              }
+              }
             }
           }
         }
@@ -169,6 +330,9 @@ int main(int argc, char** argv) {
       std::this_thread::sleep_for(200ms);
     }
   });
+
+  bool lastTrackingOk = false;
+  int lostStreak = 0;
 
   while (running.load()) {
     std::vector<zmq::message_t> parts;
@@ -209,7 +373,29 @@ int main(int argc, char** argv) {
     depthClone.convertTo(depthF32, CV_32FC1, invDepthFactor);
 
     std::array<float, 16> Twc{};
-    if (slam.trackRgbd(rgbBgr, depthF32, tNs, Twc)) {
+    bool ok = slam.trackRgbd(rgbBgr, depthF32, tNs, Twc);
+    if (ok) {
+      // If we were previously lost, emit a relocalization map_switch event (single-map: 0->0)
+      if (!lastTrackingOk && lostStreak > 0) {
+        std::uint64_t fromMapId = 0;
+        std::uint64_t toMapId = 0;
+        auto fromBytes = orbslam3_rgbd_zmq_bridge::packUint64LE(fromMapId);
+        auto toBytes = orbslam3_rgbd_zmq_bridge::packUint64LE(toMapId);
+        const std::string reason = "relocalized";
+        std::vector<zmq::const_buffer> switchFrames{
+          zmq::buffer(fromBytes.data(), fromBytes.size()),
+          zmq::buffer(toBytes.data(), toBytes.size()),
+          zmq::buffer(reason.data(), reason.size())
+        };
+        if (pubs.singlePub) {
+          orbslam3_rgbd_zmq_bridge::sendMultipart(*pubs.singlePub, "/slam/map_switch", switchFrames);
+        } else if (pubs.trackingPub) {
+          orbslam3_rgbd_zmq_bridge::sendMultipart(*pubs.trackingPub, "/slam/map_switch", switchFrames);
+        } else if (pubs.kfPosePub) {
+          orbslam3_rgbd_zmq_bridge::sendMultipart(*pubs.kfPosePub, "/slam/map_switch", switchFrames);
+        }
+      }
+
       auto tnsBytes = orbslam3_rgbd_zmq_bridge::packUint64LE(tNs);
       std::vector<std::uint8_t> poseBytes = orbslam3_rgbd_zmq_bridge::packFloat32ArrayLE(Twc.data(), 16);
       std::vector<zmq::const_buffer> frames{
@@ -221,7 +407,22 @@ int main(int argc, char** argv) {
       } else if (pubs.singlePub) {
         orbslam3_rgbd_zmq_bridge::sendMultipart(*pubs.singlePub, "slam/tracking_pose", frames);
       }
+      {
+        FrameCacheEntry entry;
+        entry.tNs = tNs;
+        entry.Twc = Twc;
+        entry.rgbJpeg.assign(jpegBuf.begin(), jpegBuf.end());
+        entry.depthRaw.resize(depthMsg.size());
+        std::memcpy(entry.depthRaw.data(), depthMsg.data(), depthMsg.size());
+        std::lock_guard<std::mutex> lg(frameCacheMutex);
+        frameCache.push_back(std::move(entry));
+        while (frameCache.size() > kFrameCacheMax) frameCache.pop_front();
+      }
+      lostStreak = 0;
+    } else {
+      lostStreak++;
     }
+    lastTrackingOk = ok;
   }
 
   running.store(false);
