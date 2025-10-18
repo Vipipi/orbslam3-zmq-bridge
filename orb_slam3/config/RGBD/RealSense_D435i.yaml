@@ -36,13 +36,14 @@ Camera.RGB: 0
 #--------------------------------------------------------------------------------------------
 
 # Depth scaling factor
-# Driver publishes depth as 32FC1 in meters -> set factor to 1.0
-RGBD.DepthMapFactor: 1.0
+# Bridge expects raw 16UC1 depth in millimeters → use 1000.0
+DepthMapFactor: 1000.0
+RGBD.DepthMapFactor: 1000.0
 
-# Depth threshold key used by some builds
-ThDepth: 40.0
+# Max usable depth (meters)
+ThDepth: 4.5
 # Also provide Stereo-prefixed keys for compatibility
-Stereo.ThDepth: 40.0
+Stereo.ThDepth: 4.5
 
 # Baseline
 Camera.bf: 19.13
@@ -54,8 +55,8 @@ Stereo.b: 0.05
 #--------------------------------------------------------------------------------------------
 
 # ORB Extractor: Number of features per image
-# D435i has good image quality, so we can extract more features
-ORBextractor.nFeatures: 1250
+# Slightly higher for robustness at 640x480
+ORBextractor.nFeatures: 1800
 
 # ORB Extractor: Scale factor between levels in the scale pyramid 	
 ORBextractor.scaleFactor: 1.2
