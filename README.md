@@ -97,6 +97,11 @@ python3 tools/publish_rgbd.py --endpoint tcp://127.0.0.1:5555 --hz 10
 python3 tools/sub_debug.py --endpoint tcp://127.0.0.1:6000 --topic slam/tracking_pose
 ```
 
+- Subscribe to keyframe packets (images + depth + intrinsics):
+```bash
+python3 d435i/zmq_debug.py -e tcp://127.0.0.1:6000 -t /slam/kf_packet
+```
+
 You should see pose matrices printed for each frame.
 
 ## 6) Alternative (Option B): Provide Installed ORB-SLAM3
@@ -123,6 +128,9 @@ Output (bridge → subscribers)
 - `slam/kf_pose`: `[ uint64 kf_id, uint64 t_ns, float32[16] Twc_row_major ]`
 
 Standardized topics (leading slash) added for map lifecycle and KF updates:
+- `/slam/kf_packet` (RGB-D data for keyframes):
+  - Frames: `[ uint64 map_id, uint64 kf_id, uint64 t_ns, float32[9] K_row_major, bytes rgb_jpeg, bytes depth_16UC1_raw ]`
+  - Notes: K is 3×3 row-major; depth buffer is raw z16 (W×H×2) matching the JPEG’s dimensions. Single-map backend uses `map_id = 0`.
 - `/slam/kf_pose_update` (burst after optimizations):
   - Frames: `[ uint64 map_id, uint64 kf_id, float32[16] T_wc_map_new ]`
   - For single-map backend, `map_id = 0`.
@@ -139,7 +147,9 @@ Standardized topics (leading slash) added for map lifecycle and KF updates:
   - Frames: `[ uint64 map_id, float32[16] T_global_map_new_SE3 ]`
   - Not emitted by this backend (no global frame maintenance currently).
 
-Depth is converted to meters using `DepthMapFactor` from your RGB-D YAML (typ. 1000.0).
+Notes:
+- All numeric fields are little-endian (LE).
+- Convert depth to meters using `DepthMapFactor` from your RGB-D YAML (typ. 1000.0).
 
 ## 8) Common Issues
 - Container builds but binary fails at runtime: check that `ORBvoc.txt.bin` and `RGBD.yaml` are mounted correctly and paths match the CLI args.

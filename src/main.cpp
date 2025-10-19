@@ -195,6 +195,7 @@ int main(int argc, char** argv) {
   std::deque<FrameCacheEntry> frameCache;
   std::mutex frameCacheMutex;
   constexpr std::size_t kFrameCacheMax = 128;
+  std::atomic<std::uint64_t> latestFrameTNs{0};
 
   auto poseError = [](const std::array<float, 16>& A, const std::array<float, 16>& B) -> double {
     double dx = static_cast<double>(A[12]) - static_cast<double>(B[12]);
@@ -229,25 +230,39 @@ int main(int argc, char** argv) {
             FrameCacheEntry best{};
             bool found = false;
             double bestErr = 0.0;
+            const std::uint64_t curLatest = latestFrameTNs.load(std::memory_order_relaxed);
+            const std::uint64_t windowNs = 50ull * 1000ull * 1000ull; // 50 ms window
             {
               std::lock_guard<std::mutex> lg(frameCacheMutex);
               for (const auto& e : frameCache) {
+                std::uint64_t age = (curLatest >= e.tNs) ? (curLatest - e.tNs) : 0ull;
+                if (age > windowNs) continue; // gate by time
                 double err = poseError(kf.TwcRowMajor, e.Twc);
                 if (!found || err < bestErr) { best = e; bestErr = err; found = true; }
               }
             }
 
+            if (!found) {
+              std::cout << "[kf_ts] skip: no frame within 50ms window for kf=" << kf.id << std::endl;
+              continue;
+            }
+
             if (pubs.kfPosePub) {
-              std::uint64_t poseTNs = kf.tNs;
-              if (poseTNs == 0 && found) poseTNs = best.tNs;
+              std::uint64_t poseTNs = (found ? best.tNs : kf.tNs);
               auto tnsBytesPose = orbslam3_rgbd_zmq_bridge::packUint64LE(poseTNs);
-              std::vector<std::uint8_t> poseBytes = orbslam3_rgbd_zmq_bridge::packFloat32ArrayLE(kf.TwcRowMajor.data(), 16);
+              // Always publish KF pose matrices for kf_pose and kf_pose_update
+              std::vector<std::uint8_t> kfPoseBytes = orbslam3_rgbd_zmq_bridge::packFloat32ArrayLE(kf.TwcRowMajor.data(), 16);
               auto idBytes = orbslam3_rgbd_zmq_bridge::packUint64LE(kf.id);
               std::vector<zmq::const_buffer> frames{
                 zmq::buffer(idBytes.data(), idBytes.size()),
                 zmq::buffer(tnsBytesPose.data(), tnsBytesPose.size()),
-                zmq::buffer(poseBytes.data(), poseBytes.size())
+                zmq::buffer(kfPoseBytes.data(), kfPoseBytes.size())
               };
+              if (found) {
+                long long deltaNs = static_cast<long long>(poseTNs) - static_cast<long long>(best.tNs);
+                double deltaMs = static_cast<double>(deltaNs) * 1e-6;
+                std::cout << "[kf_ts] id=" << kf.id << " poseNs=" << poseTNs << " pktNs=" << best.tNs << " dMs=" << deltaMs << std::endl;
+              }
               orbslam3_rgbd_zmq_bridge::sendMultipart(*pubs.kfPosePub, "slam/kf_pose", frames);
               // Also emit standardized kf pose update with map_id
               {
@@ -256,7 +271,7 @@ int main(int argc, char** argv) {
                 std::vector<zmq::const_buffer> framesUpd{
                   zmq::buffer(mapIdBytes.data(), mapIdBytes.size()),
                   zmq::buffer(idBytes.data(), idBytes.size()),
-                  zmq::buffer(poseBytes.data(), poseBytes.size())
+                  zmq::buffer(kfPoseBytes.data(), kfPoseBytes.size())
                 };
                 orbslam3_rgbd_zmq_bridge::sendMultipart(*pubs.kfPosePub, "/slam/kf_pose_update", framesUpd);
                 if (cameraK.valid && found) {
@@ -277,16 +292,20 @@ int main(int argc, char** argv) {
                 }
               }
             } else if (pubs.singlePub) {
-              std::uint64_t poseTNs = kf.tNs;
-              if (poseTNs == 0 && found) poseTNs = best.tNs;
+              std::uint64_t poseTNs = (found ? best.tNs : kf.tNs);
               auto tnsBytesPose = orbslam3_rgbd_zmq_bridge::packUint64LE(poseTNs);
-              std::vector<std::uint8_t> poseBytes = orbslam3_rgbd_zmq_bridge::packFloat32ArrayLE(kf.TwcRowMajor.data(), 16);
+              std::vector<std::uint8_t> kfPoseBytes = orbslam3_rgbd_zmq_bridge::packFloat32ArrayLE(kf.TwcRowMajor.data(), 16);
               auto idBytes = orbslam3_rgbd_zmq_bridge::packUint64LE(kf.id);
               std::vector<zmq::const_buffer> frames{
                 zmq::buffer(idBytes.data(), idBytes.size()),
                 zmq::buffer(tnsBytesPose.data(), tnsBytesPose.size()),
-                zmq::buffer(poseBytes.data(), poseBytes.size())
+                zmq::buffer(kfPoseBytes.data(), kfPoseBytes.size())
               };
+              if (found) {
+                long long deltaNs = static_cast<long long>(poseTNs) - static_cast<long long>(best.tNs);
+                double deltaMs = static_cast<double>(deltaNs) * 1e-6;
+                std::cout << "[kf_ts] id=" << kf.id << " poseNs=" << poseTNs << " pktNs=" << best.tNs << " dMs=" << deltaMs << std::endl;
+              }
               orbslam3_rgbd_zmq_bridge::sendMultipart(*pubs.singlePub, "slam/kf_pose", frames);
               // Also emit standardized kf pose update with map_id
               {
@@ -295,7 +314,7 @@ int main(int argc, char** argv) {
                 std::vector<zmq::const_buffer> framesUpd{
                   zmq::buffer(mapIdBytes.data(), mapIdBytes.size()),
                   zmq::buffer(idBytes.data(), idBytes.size()),
-                  zmq::buffer(poseBytes.data(), poseBytes.size())
+                  zmq::buffer(kfPoseBytes.data(), kfPoseBytes.size())
                 };
                 orbslam3_rgbd_zmq_bridge::sendMultipart(*pubs.singlePub, "/slam/kf_pose_update", framesUpd);
                 if (cameraK.valid && found) {
@@ -319,7 +338,7 @@ int main(int argc, char** argv) {
           }
         }
       }
-      std::this_thread::sleep_for(200ms);
+      std::this_thread::sleep_for(50ms);
     }
   });
 
@@ -388,6 +407,7 @@ int main(int argc, char** argv) {
         }
       }
 
+      latestFrameTNs.store(tNs, std::memory_order_relaxed);
       auto tnsBytes = orbslam3_rgbd_zmq_bridge::packUint64LE(tNs);
       std::vector<std::uint8_t> poseBytes = orbslam3_rgbd_zmq_bridge::packFloat32ArrayLE(Twc.data(), 16);
       std::vector<zmq::const_buffer> frames{

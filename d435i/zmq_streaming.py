@@ -57,16 +57,13 @@ def main():
 
     try:
         print(f"Publishing D435 RGB-D to {args.endpoint} on topic '{args.topic}' at {args.fps} FPS …")
-        quality_param = [int(cv2.IMWRITE_JPEG_QUALITY), int(args.jpeg-quality) if hasattr(args, 'jpeg-quality') else int(args.jpeg_quality)]
-        # Fallback for argparse dest name
-        try:
-            jpeg_quality = int(args.jpeg_quality)
-        except AttributeError:
-            jpeg_quality = int(getattr(args, 'jpeg-quality'))
+        # Resolve JPEG quality from args; support both --jpeg-quality and legacy dest
+        jpeg_quality = int(getattr(args, 'jpeg_quality', getattr(args, 'jpeg-quality', 90)))
         quality_param = [int(cv2.IMWRITE_JPEG_QUALITY), jpeg_quality]
 
         period = 1.0 / float(args.fps) if args.fps > 0 else 0.0
         while not stop:
+            loop_start_ns = time.time_ns()
             frames = pipeline.wait_for_frames()
             frames = align_to_color.process(frames)
 
@@ -80,12 +77,16 @@ def main():
             depth = np.asanyarray(depth_frame.get_data())  # HxW uint16 z16 (sensor scale typically 0.001 m per unit)
 
             # JPEG encode color
-            ok, jpg = cv2.imencode('.jpg', color, [int(cv2.IMWRITE_JPEG_QUALITY), jpeg_quality])
+            ok, jpg = cv2.imencode('.jpg', color, quality_param)
             if not ok:
                 continue
 
-            # Timestamp in nanoseconds (host monotonic time)
-            t_ns = time.time_ns()
+            # Timestamp in nanoseconds from sensor clock if available (ms -> ns),
+            # fallback to host time if metadata/method not available.
+            try:
+                t_ns = int(color_frame.get_timestamp() * 1e6)
+            except Exception:
+                t_ns = time.time_ns()
 
             # Send multipart message: [topic][t_ns][jpeg][depth_raw]
             pub.send_multipart([
@@ -97,7 +98,8 @@ def main():
 
             if period > 0:
                 # coarse pacing; bridge processes as fast as it can regardless
-                dt = period - (time.time_ns() - t_ns) * 1e-9
+                elapsed = (time.time_ns() - loop_start_ns) * 1e-9
+                dt = period - elapsed
                 if dt > 0:
                     time.sleep(dt)
     finally:
