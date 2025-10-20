@@ -27,6 +27,7 @@
 #include<string>
 #include<thread>
 #include<opencv2/core/core.hpp>
+#include<tuple>
 
 #include "Tracking.h"
 #include "FrameDrawer.h"
@@ -183,6 +184,8 @@ public:
     std::vector<cv::KeyPoint> GetTrackedKeyPoints();
     std::vector<MapPoint*> GetAllMapPoints();
     std::vector<Sophus::SE3f> GetAllKeyframePoses();
+    // Extended: get keyframe id, timestamp (s), and pose Twb/Twc like SaveKeyFrameTrajectory
+    std::vector<std::tuple<long unsigned int, double, Sophus::SE3f>> GetAllKeyframeInfos();
     cv::Mat GetCurrentFrame();
 
     Sophus::SE3f GetCamTwc();

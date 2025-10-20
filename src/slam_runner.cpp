@@ -46,13 +46,15 @@ class SlamRunner::Impl {
     std::vector<KeyframePose> out;
     if (!system_) return out;
 #ifdef ENABLE_KF_POLLING
-    auto poses = system_->GetAllKeyframePoses();
-    out.reserve(poses.size());
-    for (size_t i = 0; i < poses.size(); ++i) {
+    auto infos = system_->GetAllKeyframeInfos();
+    out.reserve(infos.size());
+    for (const auto& tup : infos) {
       KeyframePose kf{};
-      kf.id = static_cast<std::uint64_t>(i);
-      kf.tNs = 0;
-      const Eigen::Matrix4f T = poses[i].matrix();
+      long unsigned int mnId; double tSec; Sophus::SE3f Twb;
+      std::tie(mnId, tSec, Twb) = tup;
+      kf.id = static_cast<std::uint64_t>(mnId);
+      kf.tNs = static_cast<std::uint64_t>(tSec * 1e9);
+      const Eigen::Matrix4f T = Twb.matrix();
       for (int r = 0; r < 4; ++r) {
         for (int c = 0; c < 4; ++c) kf.TwcRowMajor[r * 4 + c] = T(r, c);
       }

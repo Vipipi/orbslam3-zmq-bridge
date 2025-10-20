@@ -1603,6 +1603,30 @@ vector<Sophus::SE3f> System::GetAllKeyframePoses()
     return vKFposes;
 }
 
+std::vector<std::tuple<long unsigned int, double, Sophus::SE3f>> System::GetAllKeyframeInfos()
+{
+    vector<KeyFrame*> vpKFs = mpAtlas->GetAllKeyFrames();
+    sort(vpKFs.begin(), vpKFs.end(), KeyFrame::lId);
+
+    std::vector<std::tuple<long unsigned int, double, Sophus::SE3f>> infos;
+    infos.reserve(vpKFs.size());
+    for(size_t i = 0; i < vpKFs.size(); i++)
+    {
+        KeyFrame* pKF = vpKFs[i];
+        if(pKF->isBad())
+            continue;
+
+        Sophus::SE3f Twb;
+        if (mSensor == IMU_MONOCULAR || mSensor == IMU_STEREO || mSensor == IMU_RGBD)
+            Twb = vpKFs[i]->GetImuPose();
+        else
+            Twb = vpKFs[i]->GetPoseInverse();
+
+        infos.emplace_back(pKF->mnId, pKF->mTimeStamp, Twb);
+    }
+    return infos;
+}
+
 bool System::SaveMap(const string &filename)
 {
     mStrSaveAtlasToFile = filename;
